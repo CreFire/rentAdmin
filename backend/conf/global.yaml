@@ -1,0 +1,20 @@
+port: 8080
+log:
+  level: info
+auth:
+  token_secret: "change_me_in_production"
+  token_ttl_seconds: 259200
+wechat:
+  app_id: ""
+  app_secret: ""
+  mch_id: ""
+  mch_serial_no: ""
+  api_v3_key: ""
+  private_key_path: ""
+  notify_url: ""
+  default_template_id: ""
+  mock_mode: true
+reminder:
+  enabled: true
+  interval_seconds: 600
+  retry_delay_seconds: 300

@@ -1,0 +1,30 @@
+# Codegraph
+.codegraph/
+
+# Environment
+
+# IDE
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+
+# Build output, database & logs
+backend/bin/
+backend/logs/
+backend/backup/
+backend/rentadmin.exe
+*.db
+*.db-shm
+*.db-wal
+
+# Sensitive data files
+cent3.import.debug.json
+cent3.xlsx
+context.txt
+
+# Node
+package-lock.json
+config.bat
+node_modules

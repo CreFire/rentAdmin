@@ -1,0 +1,7 @@
+<view class="card">
+  <view class="title">订单号：{{outTradeNo}}</view>
+  <view class="line">状态：{{tradeState}}</view>
+  <view class="line" wx:if="{{paidAmount}}">支付金额：¥{{paidAmount}}</view>
+  <button class="btn-primary" bindtap="onRefresh">刷新状态</button>
+  <button bindtap="goBills">返回账单</button>
+</view>

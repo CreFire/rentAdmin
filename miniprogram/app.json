@@ -1,0 +1,17 @@
+{
+  "pages": [
+    "pages/login-bind/index",
+    "pages/bills/index",
+    "pages/bill-detail/index",
+    "pages/pay-result/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "RentAdmin 小程序",
+    "navigationBarBackgroundColor": "#0b2c56",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#f5f6fa",
+    "backgroundTextStyle": "dark"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}
