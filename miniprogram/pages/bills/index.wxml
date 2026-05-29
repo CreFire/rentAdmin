@@ -1,0 +1,24 @@
+<view class="card">
+  <view class="header">
+    <view class="title">房号：{{roomNumber || "--"}}</view>
+    <button size="mini" bindtap="onRefresh">刷新</button>
+  </view>
+  <view class="sub">共 {{records.length}} 条账单记录</view>
+</view>
+
+<block wx:for="{{records}}" wx:key="id">
+  <view class="card bill" bindtap="openDetail" data-id="{{item.id}}">
+    <view class="row">
+      <text class="date">{{item.date}}</text>
+      <text class="status {{item.statusClass}}">{{item.status}}</text>
+    </view>
+    <view class="row">
+      <text>应收：¥{{item.totalAmount}}</text>
+      <text>已付：¥{{item.amountPaid}}</text>
+    </view>
+    <view class="row">
+      <text class="unpaid">待付：¥{{item.unpaid}}</text>
+      <text>点击查看详情</text>
+    </view>
+  </view>
+</block>

@@ -1,0 +1,57 @@
+<view class="card">
+  <view class="title">RentAdmin 租客小程序</view>
+  <view class="tip" wx:if="{{step === 'login'}}">第 1 步：使用微信登录获取身份</view>
+  <view class="tip" wx:else>第 2 步：绑定你的房号（首次使用即注册）</view>
+
+  <!-- 步骤指示器 -->
+  <view class="steps">
+    <view class="step-item {{step === 'login' ? 'active' : 'done'}}">
+      <view class="step-dot">1</view>
+      <view class="step-label">微信登录</view>
+    </view>
+    <view class="step-line {{step === 'bind' ? 'done' : ''}}"></view>
+    <view class="step-item {{step === 'bind' ? 'active' : ''}}">
+      <view class="step-dot">2</view>
+      <view class="step-label">绑定房号</view>
+    </view>
+  </view>
+
+  <!-- 第一步：登录 -->
+  <block wx:if="{{step === 'login'}}">
+    <view class="hint">点击下方按钮，将通过 wx.login 获取临时 code 并交由后端换取登录凭证。</view>
+    <button
+      class="btn-primary action-btn"
+      loading="{{loginLoading}}"
+      disabled="{{loginLoading}}"
+      bindtap="onLogin"
+    >
+      微信登录
+    </button>
+  </block>
+
+  <!-- 第二步：绑定 -->
+  <block wx:else>
+    <view class="hint" wx:if="{{openid}}">已识别 openid：{{openid}}</view>
+    <input
+      class="input"
+      placeholder="请输入房号，例如 A-101"
+      value="{{roomNumber}}"
+      bindinput="onRoomInput"
+    />
+    <input
+      class="input"
+      placeholder="租客姓名（可选）"
+      value="{{tenantName}}"
+      bindinput="onNameInput"
+    />
+    <button
+      class="btn-primary action-btn"
+      loading="{{bindLoading}}"
+      disabled="{{bindLoading}}"
+      bindtap="onBindRoom"
+    >
+      完成绑定 / 注册
+    </button>
+    <button class="btn-link" bindtap="onReLogin">切换账号 / 重新登录</button>
+  </block>
+</view>

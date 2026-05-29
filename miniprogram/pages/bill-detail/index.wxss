@@ -1,0 +1,158 @@
+/* 租客/账期头部 */
+.bill-header {
+  margin-bottom: 28rpx;
+}
+.bill-name {
+  font-size: 36rpx;
+  font-weight: 700;
+  color: #1f2d3d;
+  margin-bottom: 12rpx;
+}
+.bill-meta {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+.room-tag {
+  background: #e8f0fe;
+  color: #1a56db;
+  font-size: 24rpx;
+  font-weight: 600;
+  padding: 4rpx 16rpx;
+  border-radius: 999rpx;
+}
+.period-tag {
+  color: #6b7280;
+  font-size: 26rpx;
+}
+
+/* 分节标题 */
+.section-title {
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 2rpx;
+  margin-bottom: 16rpx;
+}
+
+/* 费用块 */
+.fee-block {
+  background: #f9fafb;
+  border-radius: 12rpx;
+  padding: 20rpx 24rpx;
+  margin-bottom: 12rpx;
+}
+.fee-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.fee-label {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  font-size: 28rpx;
+  color: #374151;
+}
+.fee-icon {
+  width: 44rpx;
+  height: 44rpx;
+  border-radius: 10rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22rpx;
+  font-weight: 700;
+  color: #fff;
+}
+.rent-icon { background: #6366f1; }
+.water-icon { background: #0ea5e9; }
+.elec-icon  { background: #f59e0b; }
+
+.cycle-tag {
+  background: #ede9fe;
+  color: #7c3aed;
+  font-size: 22rpx;
+  padding: 2rpx 12rpx;
+  border-radius: 999rpx;
+}
+.fee-value {
+  font-size: 30rpx;
+  font-weight: 700;
+  color: #1f2d3d;
+}
+.fee-sub-row {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 10rpx;
+}
+.fee-sub-text {
+  font-size: 24rpx;
+  color: #9ca3af;
+}
+.usage-tag {
+  font-size: 22rpx;
+  font-weight: 700;
+  padding: 2rpx 14rpx;
+  border-radius: 999rpx;
+}
+.water-tag {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+.elec-tag {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+/* 汇总块 */
+.summary-block {
+  border-top: 1rpx solid #e5e7eb;
+  margin-top: 24rpx;
+  padding-top: 20rpx;
+}
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10rpx 0;
+}
+.summary-label {
+  font-size: 28rpx;
+  color: #6b7280;
+}
+.summary-total {
+  font-size: 34rpx;
+  font-weight: 800;
+  color: #1f2d3d;
+}
+.summary-paid {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #059669;
+}
+.summary-unpaid {
+  font-size: 34rpx;
+  font-weight: 800;
+  color: #dc2626;
+}
+.summary-done {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #059669;
+}
+
+/* 支付区 */
+.input {
+  margin: 24rpx 0;
+  height: 88rpx;
+  border: 1rpx solid #dbe2ea;
+  border-radius: 12rpx;
+  padding: 0 24rpx;
+  font-size: 28rpx;
+  background: #f9fafb;
+}
+button {
+  margin-top: 16rpx;
+}

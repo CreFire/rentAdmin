@@ -1,0 +1,12 @@
+.title {
+  font-size: 30rpx;
+  margin-bottom: 14rpx;
+}
+
+.line {
+  margin-bottom: 10rpx;
+}
+
+button {
+  margin-top: 12rpx;
+}

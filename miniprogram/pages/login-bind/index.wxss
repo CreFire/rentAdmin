@@ -1,0 +1,102 @@
+.title {
+  font-size: 36rpx;
+  font-weight: 600;
+  color: #0b2c56;
+}
+
+.tip {
+  margin: 16rpx 0 24rpx;
+  color: #6b7280;
+}
+
+.hint {
+  margin: 12rpx 0 24rpx;
+  color: #9ca3af;
+  font-size: 24rpx;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+.input {
+  height: 88rpx;
+  border: 1rpx solid #dbe2ea;
+  border-radius: 12rpx;
+  padding: 0 24rpx;
+  margin-bottom: 20rpx;
+  background: #fff;
+}
+
+.action-btn {
+  margin-top: 16rpx;
+  height: 88rpx;
+  line-height: 88rpx;
+  border-radius: 12rpx;
+  font-size: 30rpx;
+}
+
+.btn-link {
+  margin-top: 24rpx;
+  background: transparent;
+  color: #0b5fd7;
+  font-size: 26rpx;
+  border: none;
+}
+.btn-link::after {
+  border: none;
+}
+
+.steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 12rpx 0 32rpx;
+}
+
+.step-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.step-dot {
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 50%;
+  background: #d1d5db;
+  color: #fff;
+  text-align: center;
+  line-height: 56rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+}
+
+.step-item.active .step-dot {
+  background: #0b5fd7;
+}
+
+.step-item.done .step-dot {
+  background: #059669;
+}
+
+.step-label {
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  color: #6b7280;
+}
+
+.step-item.active .step-label {
+  color: #0b5fd7;
+}
+
+.step-line {
+  flex: 1;
+  height: 4rpx;
+  margin: 0 16rpx;
+  background: #e5e7eb;
+  margin-bottom: 32rpx;
+}
+
+.step-line.done {
+  background: #059669;
+}

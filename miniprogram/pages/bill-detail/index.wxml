@@ -1,0 +1,95 @@
+<view class="card" wx:if="{{bill}}">
+
+  <!-- 租客/账期信息 -->
+  <view class="bill-header">
+    <view class="bill-name">{{bill.name}}</view>
+    <view class="bill-meta">
+      <text class="room-tag">{{bill.roomNumber}}</text>
+      <text class="period-tag">{{bill.date}}</text>
+    </view>
+  </view>
+
+  <!-- 费用明细 -->
+  <view class="section-title">费用明细</view>
+
+  <view class="fee-block">
+    <view class="fee-row">
+      <view class="fee-label">
+        <text class="fee-icon rent-icon">租</text>
+        <text>租金</text>
+        <text class="cycle-tag">{{bill.rentCycle}}</text>
+      </view>
+      <text class="fee-value">¥{{bill.rentAmountDisplay}}</text>
+    </view>
+  </view>
+
+  <view class="fee-block">
+    <view class="fee-row">
+      <view class="fee-label">
+        <text class="fee-icon water-icon">水</text>
+        <text>水费</text>
+      </view>
+      <text class="fee-value">¥{{bill.waterBillDisplay}}</text>
+    </view>
+    <view class="fee-sub-row" wx:if="{{bill.hasPrev}}">
+      <text class="fee-sub-text">{{bill.prevWaterReading}} → {{bill.waterReading}} 吨</text>
+      <text class="usage-tag water-tag">本期 +{{bill.waterUsage}} 吨</text>
+    </view>
+    <view class="fee-sub-row" wx:else>
+      <text class="fee-sub-text">当前读数 {{bill.waterReading}} 吨</text>
+      <text class="fee-sub-text">5.5 元/吨</text>
+    </view>
+  </view>
+
+  <view class="fee-block">
+    <view class="fee-row">
+      <view class="fee-label">
+        <text class="fee-icon elec-icon">电</text>
+        <text>电费</text>
+      </view>
+      <text class="fee-value">¥{{bill.electricityBillDisplay}}</text>
+    </view>
+    <view class="fee-sub-row" wx:if="{{bill.hasPrev}}">
+      <text class="fee-sub-text">{{bill.prevElectricityReading}} → {{bill.electricityReading}} 度</text>
+      <text class="usage-tag elec-tag">本期 +{{bill.electricityUsage}} 度</text>
+    </view>
+    <view class="fee-sub-row" wx:else>
+      <text class="fee-sub-text">当前读数 {{bill.electricityReading}} 度</text>
+      <text class="fee-sub-text">1.2 元/度</text>
+    </view>
+  </view>
+
+  <!-- 汇总 -->
+  <view class="summary-block">
+    <view class="summary-row">
+      <text class="summary-label">应收合计</text>
+      <text class="summary-total">¥{{bill.totalAmount}}</text>
+    </view>
+    <view class="summary-row">
+      <text class="summary-label">已付金额</text>
+      <text class="summary-paid">¥{{bill.amountPaid}}</text>
+    </view>
+    <view class="summary-row" wx:if="{{bill.unpaid > 0}}">
+      <text class="summary-label">待付余额</text>
+      <text class="summary-unpaid">¥{{bill.unpaid}}</text>
+    </view>
+    <view class="summary-row paid-row" wx:if="{{bill.unpaid <= 0}}">
+      <text class="summary-label">缴费状态</text>
+      <text class="summary-done">✓ 已结清</text>
+    </view>
+  </view>
+
+  <!-- 支付操作 -->
+  <view wx:if="{{bill.unpaid > 0}}">
+    <input
+      class="input"
+      type="digit"
+      value="{{payAmountYuan}}"
+      placeholder="本次支付金额（元），默认全额待付"
+      bindinput="onPayAmountInput"
+    />
+    <button class="btn-primary" loading="{{paying}}" bindtap="onPay">立即支付</button>
+    <button class="btn-warning" loading="{{subscribing}}" bindtap="onSubscribe">订阅欠费提醒</button>
+  </view>
+
+</view>
