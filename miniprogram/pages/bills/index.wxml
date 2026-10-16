@@ -10,7 +10,7 @@
   <view class="card bill" bindtap="openDetail" data-id="{{item.id}}">
     <view class="row">
       <text class="date">{{item.date}}</text>
-      <text class="status {{item.statusClass}}">{{item.status}}</text>
+      <text class="status {{item.statusClass}}">{{item.statusText}}</text>
     </view>
     <view class="row">
       <text>应收：¥{{item.totalAmount}}</text>

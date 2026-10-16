@@ -33,7 +33,6 @@ Page({
       const totalAmount = Number(hit.totalAmount || 0);
       const amountPaid = Number(hit.amountPaid || 0);
       const unpaid = Math.max(totalAmount - amountPaid, 0);
-      const rentCycleMultiplier = { '月度': 1, '季度': 3, '半年': 6, '年度': 12 }[hit.rentCycle] || 1;
       const hasPrev = !!hit.hasPrev;
       this.setData({
         bill: {
@@ -41,7 +40,11 @@ Page({
           totalAmount: totalAmount.toFixed(2),
           amountPaid: amountPaid.toFixed(2),
           unpaid: unpaid.toFixed(2),
-          rentAmountDisplay: (Number(hit.rentAmount || 0) * rentCycleMultiplier).toFixed(2),
+          // 房租按缴费周期在周期首月收整期，其余月份为 0（由后端计算 rentDue）
+          rentAmountDisplay: Number(hit.rentDue || 0).toFixed(2),
+          rentOffCycle: Number(hit.rentDue || 0) === 0 && hit.rentCycle && hit.rentCycle !== "月度",
+          extraFeeDisplay: Number(hit.extraFee || 0).toFixed(2),
+          hasExtraFee: Number(hit.extraFee || 0) > 0,
           waterBillDisplay: Number(hit.waterBill || 0).toFixed(2),
           electricityBillDisplay: Number(hit.electricityBill || 0).toFixed(2),
           waterReading: Number(hit.waterReading || 0).toFixed(1),
@@ -96,7 +99,7 @@ Page({
       });
 
       // mock_mode 下主动通知后端入账，真实模式应由微信异步回调触发。
-      await notifyMockSuccess(order.outTradeNo);
+      await notifyMockSuccess(token, order.outTradeNo);
       wx.redirectTo({ url: `/pages/pay-result/index?outTradeNo=${order.outTradeNo}` });
     } catch (error) {
       wx.showToast({ title: error.message || "支付失败", icon: "none" });

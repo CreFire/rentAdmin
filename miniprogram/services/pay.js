@@ -17,10 +17,12 @@ async function queryOrder(token, outTradeNo) {
   });
 }
 
-async function notifyMockSuccess(outTradeNo) {
+// 仅 mock_mode 可用：后端会校验 token 对应的用户是否为订单所有者。
+async function notifyMockSuccess(token, outTradeNo) {
   return request({
     url: "/api/mp/pay/notify",
     method: "POST",
+    token,
     data: {
       outTradeNo,
       transactionId: `mock_tx_${Date.now()}`,

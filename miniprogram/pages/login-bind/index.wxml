@@ -40,7 +40,7 @@
     />
     <input
       class="input"
-      placeholder="租客姓名（可选）"
+      placeholder="租客姓名（需与登记姓名一致）"
       value="{{tenantName}}"
       bindinput="onNameInput"
     />

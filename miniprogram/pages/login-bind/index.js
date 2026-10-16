@@ -70,6 +70,11 @@ Page({
       wx.showToast({ title: "请输入房号", icon: "none" });
       return;
     }
+    const tenantName = this.data.tenantName.trim();
+    if (!tenantName) {
+      wx.showToast({ title: "请输入租客姓名", icon: "none" });
+      return;
+    }
 
     const app = getApp();
     const token = app.globalData.token;
@@ -82,7 +87,7 @@ Page({
 
     this.setData({ bindLoading: true });
     try {
-      await bindRoom(token, roomNumber, this.data.tenantName.trim());
+      await bindRoom(token, roomNumber, tenantName);
       app.setAuth({ roomNumber });
       wx.showToast({ title: "绑定成功", icon: "success" });
       setTimeout(() => {

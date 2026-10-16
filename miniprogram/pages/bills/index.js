@@ -1,13 +1,25 @@
 const { fetchBills } = require("../../services/bills");
 
+function currentMonth() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
 function withViewData(record) {
   const totalAmount = Number(record.totalAmount || 0).toFixed(2);
   const amountPaid = Number(record.amountPaid || 0).toFixed(2);
   const unpaid = Math.max(Number(totalAmount) - Number(amountPaid), 0).toFixed(2);
   let statusClass = "status-unpaid";
+  let statusText = record.status;
   if (record.status === "已缴") statusClass = "status-paid";
   if (record.status === "部分缴纳") statusClass = "status-partial";
-  return { ...record, totalAmount, amountPaid, unpaid, statusClass };
+  // 季付/半年付：水电每月计费，到收款月与房租一起收取
+  const dueMonth = record.dueMonth || record.date;
+  if (record.status !== "已缴" && dueMonth > currentMonth()) {
+    statusClass = "status-paid";
+    statusText = `${dueMonth} 收`;
+  }
+  return { ...record, totalAmount, amountPaid, unpaid, statusClass, statusText, dueMonth };
 }
 
 Page({

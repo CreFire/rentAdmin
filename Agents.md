@@ -90,12 +90,14 @@ rentadmin/
 | idCard | string | 身份证号 (可选) |
 | checkInDate | string | 入住日期 YYYY-MM-DD (可选) |
 | deposit | number | 押金 (可选) |
-| rentAmount | number | 租金金额 |
+| rentAmount | number | 月租 |
+| rentDue | number | 本期应收房租（周期首月 = 月租 × 倍数，其余 0） |
+| extraFee | number | 其他费用（垃圾费、维修费等） |
 | waterReading | number | 水表读数 |
 | electricityReading | number | 电表读数 |
 | waterBill | number | 水费 |
 | electricityBill | number | 电费 |
-| totalAmount | number | 本期合计 (租金 + 水电) |
+| totalAmount | number | 本期合计 (rentDue + 水电 + extraFee) |
 | amountPaid | number | 已付金额 |
 | rentCycle | PaymentCycle | 租金周期 |
 | utilityCycle | PaymentCycle | 水电周期 |
@@ -129,18 +131,24 @@ rentadmin/
 - 电费: 1.2 元/度 (`ELEC_UNIT_PRICE`)
 
 ### 计算公式
-```
-租金周期倍数:
-  - 月度: 1
-  - 季度: 3
-  - 半年: 6
-  - 年度: 12
 
-本期租金 = rentAmount × 租金周期倍数
-水费 = (当前水表读数 - 上期水表读数) × 5.5
-电费 = (当前电表读数 - 上期电表读数) × 1.2
-本期合计 = 本期租金 + 水费 + 电费
+账单按「一户一月」存储（`date = YYYY-MM`），金额全部由后端 `services.CalculateBill` 计算，前端/小程序只提交读数等输入。
+
 ```
+租金周期倍数: 月度 1 / 季度 3 / 半年 6 / 年度 12
+锚点月 = 入住日期所在月；无入住日期时取该租客在本房间的首张账单月
+
+本期房租 rentDue = 月租 × 倍数   (账单月 − 锚点月 能被倍数整除，即周期首月)
+                = 0             (其余月份)
+水费 = (本期水表 − 上期水表) × 5.5        (请求中 waterBill 与 electricityBill 都为 0 时由后端计算)
+电费 = (本期电表 − 上期电表) × 1.2
+本期合计 = rentDue + 水费 + 电费 + 其他费用 extraFee
+```
+
+- 读数小于上期、或任一费用为负 → 400。
+- 编辑账单时仅当 月租/缴费周期/入住日期 变化才重算 rentDue（Excel 导入账单的金额不会因改联系方式而变）。
+- Excel 导入：合计取表格「总计金额」，「额外」列存入 extraFee，rentDue = 合计 − 水电 − 额外。
+- `POST /api/bills/generate {"month":"YYYY-MM"}`：为该月尚无账单的每个房间，从上一期带出租客信息与读数生成账单（水电为 0，抄表后更新）。
 
 ### 缴费状态判定
 ```
@@ -160,11 +168,13 @@ else:
 |------|------|------|
 | GET | `/api/tenants` | 获取所有租户记录 |
 | POST | `/api/tenants` | 创建或更新租户记录 |
-| PUT | `/api/tenants/:id` | 更新指定 ID 的租户记录 |
+| PUT | `/api/tenants/:id` | 更新指定 ID 的租户记录（请求体与已存记录合并，未传字段保持不变） |
+| POST | `/api/tenants/:id/payments` | 登记收款 `{"amount": 元}`，原子累加并封顶到应收 |
 | DELETE | `/api/tenants/:id` | 删除指定 ID 的租户记录 |
 | GET | `/api/tenants/room/:room_number` | 根据房间号获取租户 |
+| POST | `/api/bills/generate` | 生成指定月份（默认当月）所有房间的账单，已存在的跳过 |
 | DELETE | `/api/tenants/room/:room_number` | 根据房间号删除租户 |
-| DELETE | `/api/tenants` | 清空所有租户记录 |
+| DELETE | `/api/tenants?confirm=ALL` | 清空所有租户记录（必须带 confirm=ALL） |
 
 ### 财务统计
 
@@ -179,8 +189,12 @@ else:
 |------|------|------|
 | POST | `/api/excel/import` | 从 Excel 文件导入租户数据 |
 
-### CORS 配置
-所有 API 均启用 CORS，允许所有来源访问。
+### 鉴权与 CORS
+- `/api/*`（不含 `/api/mp/*`）需要 `Authorization: Bearer <ADMIN_TOKEN>`。未配置 `ADMIN_TOKEN` 时后端启动会生成随机口令并打印到控制台；Web 端首次 401 时弹窗输入，保存在 localStorage `rentadmin_admin_token`。
+- `/api/mp/*`（除 `/login`）需要小程序 token；`/api/mp/pay/notify` 在 mock 模式下要求订单所有者 token，非 mock 模式在实现微信支付 v3 验签前一律返回 501。
+- `auth.token_secret` 不得提交到仓库，使用环境变量 `AUTH_TOKEN_SECRET`；非 mock 模式缺失时拒绝启动。
+- CORS 仅放行 `cors_allowed_origins` / `CORS_ALLOWED_ORIGINS` 中的来源（Web 端经 Vite 代理同源访问，无需配置）。
+- 数据库路径：`sqlite_path` / `SQLITE_PATH`，默认 `./bin/rentadmin.db`。
 
 ## 前端数据流
 

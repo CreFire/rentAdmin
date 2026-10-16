@@ -21,6 +21,9 @@
       </view>
       <text class="fee-value">¥{{bill.rentAmountDisplay}}</text>
     </view>
+    <view class="fee-sub-row" wx:if="{{bill.rentOffCycle}}">
+      <text class="fee-sub-text">本月不在收租月，房租已在周期首月收取</text>
+    </view>
   </view>
 
   <view class="fee-block">
@@ -56,6 +59,15 @@
     <view class="fee-sub-row" wx:else>
       <text class="fee-sub-text">当前读数 {{bill.electricityReading}} 度</text>
       <text class="fee-sub-text">1.2 元/度</text>
+    </view>
+  </view>
+  <view class="fee-block" wx:if="{{bill.hasExtraFee}}">
+    <view class="fee-row">
+      <view class="fee-label">
+        <text class="fee-icon rent-icon">其</text>
+        <text>其他费用</text>
+      </view>
+      <text class="fee-value">¥{{bill.extraFeeDisplay}}</text>
     </view>
   </view>
 
