@@ -19,7 +19,7 @@ type AuthService struct {
 
 func NewAuthService(secret string, ttlSeconds int64) *AuthService {
 	if secret == "" {
-		secret = "change_me_in_production"
+		panic("auth token secret must not be empty")
 	}
 	if ttlSeconds <= 0 {
 		ttlSeconds = 72 * 3600

@@ -6,8 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"rentadmin/src/middleware"
 	"rentadmin/src/models"
 	"rentadmin/src/services"
+	"rentadmin/src/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -47,10 +49,7 @@ func (h *MPAuthHandler) Login(c *gin.Context) {
 }
 
 func (h *MPAuthHandler) BindRoom(c *gin.Context) {
-	openid, ok := h.requireOpenID(c)
-	if !ok {
-		return
-	}
+	openid := c.GetString(middleware.OpenIDKey)
 
 	var req models.MPBindRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -63,14 +62,21 @@ func (h *MPAuthHandler) BindRoom(c *gin.Context) {
 		return
 	}
 
-	var tenantCount int
-	err := h.DB.QueryRow(`SELECT COUNT(1) FROM tenants WHERE room_number = ?`, req.RoomNumber).Scan(&tenantCount)
-	if err != nil {
+	req.TenantName = strings.TrimSpace(req.TenantName)
+	if req.TenantName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请填写租客姓名"})
+		return
+	}
+
+	// Binding grants access to the room's bills, so the caller must know the current tenant's name.
+	var currentName string
+	err := h.DB.QueryRow(`SELECT name FROM tenants WHERE room_number = ? ORDER BY date DESC LIMIT 1`, req.RoomNumber).Scan(&currentName)
+	if err != nil && err != sql.ErrNoRows {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if tenantCount == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "room not found"})
+	if err == sql.ErrNoRows || strings.TrimSpace(currentName) != req.TenantName {
+		c.JSON(http.StatusForbidden, gin.H{"error": "房号或租客姓名不匹配"})
 		return
 	}
 
@@ -81,7 +87,7 @@ func (h *MPAuthHandler) BindRoom(c *gin.Context) {
 		_, err = h.DB.Exec(`UPDATE mp_user_bindings SET room_number = ?, tenant_name = ?, unionid = ?, updated_at = ? WHERE openid = ?`,
 			req.RoomNumber, req.TenantName, nullIfEmpty(req.UnionID), now, openid)
 	} else if err == sql.ErrNoRows {
-		id := "bind_" + time.Now().UTC().Format("20060102150405.000000000")
+		id := utils.NewID("bind_")
 		_, err = h.DB.Exec(`INSERT INTO mp_user_bindings(id, openid, unionid, room_number, tenant_name, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			id, openid, nullIfEmpty(req.UnionID), req.RoomNumber, req.TenantName, now, now)
@@ -97,10 +103,28 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`,
 	c.JSON(http.StatusOK, gin.H{"message": "绑定成功", "roomNumber": req.RoomNumber})
 }
 
-// BillView 在 TenantRecord 基础上补充与上一期相邻账单的对比字段，
-// 方便小程序端直接展示本期水电消耗。
+// BillView 是小程序账单的对外结构：不含身份证号，手机号脱敏，
+// 并补充与上一期相邻账单的对比字段，方便小程序端直接展示本期水电消耗。
 type BillView struct {
-	*models.TenantRecord
+	ID                     string  `json:"id"`
+	RoomNumber             string  `json:"roomNumber"`
+	Name                   string  `json:"name"`
+	Phone                  string  `json:"phone"`
+	RentAmount             float64 `json:"rentAmount"`
+	RentDue                float64 `json:"rentDue"`
+	ExtraFee               float64 `json:"extraFee"`
+	WaterReading           float64 `json:"waterReading"`
+	ElectricityReading     float64 `json:"electricityReading"`
+	WaterBill              float64 `json:"waterBill"`
+	ElectricityBill        float64 `json:"electricityBill"`
+	TotalAmount            float64 `json:"totalAmount"`
+	AmountPaid             float64 `json:"amountPaid"`
+	RentCycle              string  `json:"rentCycle"`
+	UtilityCycle           string  `json:"utilityCycle"`
+	Status                 string  `json:"status"`
+	Date                   string  `json:"date"`
+	DueMonth               string  `json:"dueMonth"`
+	RecordedAt             *string `json:"recordedAt,omitempty"`
 	PrevWaterReading       float64 `json:"prevWaterReading"`
 	PrevElectricityReading float64 `json:"prevElectricityReading"`
 	WaterUsage             float64 `json:"waterUsage"`
@@ -108,11 +132,25 @@ type BillView struct {
 	HasPrev                bool    `json:"hasPrev"`
 }
 
-func (h *MPAuthHandler) GetBills(c *gin.Context) {
-	openid, ok := h.requireOpenID(c)
-	if !ok {
-		return
+func newBillView(t *models.TenantRecord) *BillView {
+	return &BillView{
+		ID: t.ID, RoomNumber: t.RoomNumber, Name: t.Name, Phone: maskPhone(t.Phone),
+		RentAmount: t.RentAmount, RentDue: t.RentDue, ExtraFee: t.ExtraFee, WaterReading: t.WaterReading, ElectricityReading: t.ElectricityReading,
+		WaterBill: t.WaterBill, ElectricityBill: t.ElectricityBill, TotalAmount: t.TotalAmount, AmountPaid: t.AmountPaid,
+		RentCycle: t.RentCycle, UtilityCycle: t.UtilityCycle, Status: t.Status, Date: t.Date, DueMonth: t.DueMonth, RecordedAt: t.RecordedAt,
 	}
+}
+
+// maskPhone keeps the first 3 and last 4 digits: 13800138001 -> 138****8001.
+func maskPhone(phone string) string {
+	if len(phone) < 8 {
+		return phone
+	}
+	return phone[:3] + strings.Repeat("*", len(phone)-7) + phone[len(phone)-4:]
+}
+
+func (h *MPAuthHandler) GetBills(c *gin.Context) {
+	openid := c.GetString(middleware.OpenIDKey)
 
 	var roomNumber string
 	if err := h.DB.QueryRow(`SELECT room_number FROM mp_user_bindings WHERE openid = ?`, openid).Scan(&roomNumber); err != nil {
@@ -124,43 +162,16 @@ func (h *MPAuthHandler) GetBills(c *gin.Context) {
 		return
 	}
 
-	rows, err := h.DB.Query(`SELECT id, room_number, name, phone, id_card, check_in_date, deposit, rent_amount, water_reading, electricity_reading, water_bill, electricity_bill, total_amount, amount_paid, rent_cycle, utility_cycle, status, date, recorded_at, created_at, updated_at, monthly_income, annual_income, water_elec_income, monthly_water_elec_income, annual_water_elec_income FROM tenants WHERE room_number = ? ORDER BY date DESC`, roomNumber)
+	list, err := services.QueryTenants(h.DB, `WHERE room_number = ? ORDER BY date DESC`, roomNumber)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
-	}
-	defer rows.Close()
-
-	list := make([]*models.TenantRecord, 0)
-	for rows.Next() {
-		var t models.TenantRecord
-		var idCard, checkInDate, recordedAt *string
-		var deposit *float64
-		var createdAt, updatedAt string
-		var monthlyIncome, annualIncome, waterElecIncome, monthlyWaterElecIncome, annualWaterElecIncome float64
-		scanErr := rows.Scan(&t.ID, &t.RoomNumber, &t.Name, &t.Phone, &idCard, &checkInDate, &deposit, &t.RentAmount, &t.WaterReading, &t.ElectricityReading, &t.WaterBill, &t.ElectricityBill, &t.TotalAmount, &t.AmountPaid, &t.RentCycle, &t.UtilityCycle, &t.Status, &t.Date, &recordedAt, &createdAt, &updatedAt, &monthlyIncome, &annualIncome, &waterElecIncome, &monthlyWaterElecIncome, &annualWaterElecIncome)
-		if scanErr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": scanErr.Error()})
-			return
-		}
-		t.IDCard = idCard
-		t.CheckInDate = checkInDate
-		t.Deposit = deposit
-		t.RecordedAt = recordedAt
-		t.MonthlyIncome = monthlyIncome
-		t.AnnualIncome = annualIncome
-		t.WaterElecIncome = waterElecIncome
-		t.MonthlyWaterElecIncome = monthlyWaterElecIncome
-		t.AnnualWaterElecIncome = annualWaterElecIncome
-		t.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-		t.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
-		list = append(list, &t)
 	}
 
 	// 记录按 date DESC 排列，i+1 即为第 i 条的上一期账单。
 	views := make([]*BillView, len(list))
 	for i, cur := range list {
-		view := &BillView{TenantRecord: cur}
+		view := newBillView(cur)
 		if i+1 < len(list) {
 			prev := list[i+1]
 			view.PrevWaterReading = prev.WaterReading
@@ -176,10 +187,7 @@ func (h *MPAuthHandler) GetBills(c *gin.Context) {
 }
 
 func (h *MPAuthHandler) RecordSubscribe(c *gin.Context) {
-	openid, ok := h.requireOpenID(c)
-	if !ok {
-		return
-	}
+	openid := c.GetString(middleware.OpenIDKey)
 
 	var req models.MPSubscribeRecordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -191,27 +199,6 @@ func (h *MPAuthHandler) RecordSubscribe(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "订阅记录成功"})
-}
-
-func (h *MPAuthHandler) requireOpenID(c *gin.Context) (string, bool) {
-	authHeader := strings.TrimSpace(c.GetHeader("Authorization"))
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing authorization"})
-		return "", false
-	}
-
-	token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer"))
-	if token == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization"})
-		return "", false
-	}
-
-	openid, err := h.Auth.ValidateToken(token)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
-		return "", false
-	}
-	return openid, true
 }
 
 func nullIfEmpty(v string) interface{} {

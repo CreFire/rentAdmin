@@ -28,3 +28,7 @@ context.txt
 package-lock.json
 config.bat
 node_modules
+
+# OS / local runtime
+.DS_Store
+.runtime/

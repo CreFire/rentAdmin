@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
+	"rentadmin/src/middleware"
 	"rentadmin/src/models"
 	"rentadmin/src/services"
+	"rentadmin/src/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -23,10 +24,7 @@ type WXPayHandler struct {
 }
 
 func (h *WXPayHandler) CreateOrder(c *gin.Context) {
-	openid, ok := h.requireOpenID(c)
-	if !ok {
-		return
-	}
+	openid := c.GetString(middleware.OpenIDKey)
 
 	var req models.MPCreateOrderRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -61,7 +59,7 @@ func (h *WXPayHandler) CreateOrder(c *gin.Context) {
 		return
 	}
 
-	outstandingFen := int64((totalAmount - amountPaid) * 100)
+	outstandingFen := services.YuanToFen(totalAmount - amountPaid)
 	if outstandingFen <= 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "该账单已结清"})
 		return
@@ -73,8 +71,12 @@ func (h *WXPayHandler) CreateOrder(c *gin.Context) {
 	}
 
 	now := time.Now().UTC()
-	outTradeNo := "ra" + now.Format("20060102150405") + strings.ReplaceAll(time.Now().Format("000000000"), ".", "")
-	orderID := "ord_" + now.Format("20060102150405.000000000")
+	outTradeNo := utils.NewID("ra") // 24 chars, within WeChat's 32-char out_trade_no limit
+	orderID := utils.NewID("ord_")
+
+	// A new order supersedes this user's unpaid orders for the same bill (e.g. an abandoned payment sheet).
+	_, _ = h.DB.Exec(`UPDATE wx_payment_orders SET trade_state = 'CLOSED', updated_at = ? WHERE tenant_bill_id = ? AND openid = ? AND trade_state = 'CREATED'`,
+		now.Format(time.RFC3339), req.TenantBillID, openid)
 	description := req.Description
 	if description == "" {
 		description = tenantName + " " + roomNumber + " " + billDate + " 租金支付"
@@ -113,7 +115,16 @@ id, out_trade_no, tenant_bill_id, room_number, bill_date, openid, amount_fen, cu
 	})
 }
 
+// Notify handles the real WeChat Pay v3 callback. Until signature verification
+// (Wechatpay-Signature + AEAD resource decryption) is implemented, it refuses every request
+// instead of trusting an unauthenticated body.
 func (h *WXPayHandler) Notify(c *gin.Context) {
+	c.JSON(http.StatusNotImplemented, gin.H{"code": "FAIL", "message": "wechat pay notify verification not implemented"})
+}
+
+// MockNotify handles POST /api/mp/pay/notify in mock mode. The caller must be the order's owner,
+// so a simulated payment cannot be reported for someone else's order.
+func (h *WXPayHandler) MockNotify(c *gin.Context) {
 	var req models.MPNotifyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -121,6 +132,16 @@ func (h *WXPayHandler) Notify(c *gin.Context) {
 	}
 	if req.OutTradeNo == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "outTradeNo is required"})
+		return
+	}
+
+	var orderOpenID string
+	if err := h.DB.QueryRow(`SELECT openid FROM wx_payment_orders WHERE out_trade_no = ?`, req.OutTradeNo).Scan(&orderOpenID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
+		return
+	}
+	if orderOpenID != c.GetString(middleware.OpenIDKey) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return
 	}
 
@@ -132,7 +153,7 @@ func (h *WXPayHandler) Notify(c *gin.Context) {
 		}
 	}
 
-	logID := "nlog_" + now.Format("20060102150405.000000000")
+	logID := utils.NewID("nlog_")
 	verifyOK := 1
 	processed := 0
 	if req.Success {
@@ -158,10 +179,7 @@ func (h *WXPayHandler) Notify(c *gin.Context) {
 }
 
 func (h *WXPayHandler) GetOrder(c *gin.Context) {
-	openid, ok := h.requireOpenID(c)
-	if !ok {
-		return
-	}
+	openid := c.GetString(middleware.OpenIDKey)
 	outTradeNo := c.Param("out_trade_no")
 	if outTradeNo == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "out_trade_no is required"})
@@ -209,10 +227,7 @@ FROM wx_payment_orders WHERE out_trade_no = ?`, outTradeNo).Scan(
 }
 
 func (h *WXPayHandler) SyncOrder(c *gin.Context) {
-	openid, ok := h.requireOpenID(c)
-	if !ok {
-		return
-	}
+	openid := c.GetString(middleware.OpenIDKey)
 	outTradeNo := c.Param("out_trade_no")
 	if outTradeNo == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "out_trade_no is required"})
@@ -274,25 +289,6 @@ func (h *WXPayHandler) TriggerReminders(c *gin.Context) {
 		"failed":         fail1 + fail2,
 		"processedLimit": limit,
 	})
-}
-
-func (h *WXPayHandler) requireOpenID(c *gin.Context) (string, bool) {
-	authHeader := strings.TrimSpace(c.GetHeader("Authorization"))
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "missing authorization"})
-		return "", false
-	}
-	token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer"))
-	if token == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid authorization"})
-		return "", false
-	}
-	openid, err := h.Auth.ValidateToken(token)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
-		return "", false
-	}
-	return openid, true
 }
 
 func toJSONString(v interface{}) string {

@@ -68,29 +68,11 @@ func (s *TenantPaymentService) ApplyPaymentByOutTradeNo(outTradeNo, transactionI
 	if paymentAmount <= 0 {
 		return errors.New("invalid payment amount")
 	}
-
-	newAmountPaid := amountPaid + paymentAmount
-	if newAmountPaid > totalAmount {
-		newAmountPaid = totalAmount
-	}
-	if newAmountPaid < 0 {
-		newAmountPaid = 0
-	}
-
-	status := "待缴"
-	if newAmountPaid >= totalAmount {
-		status = "已缴"
-	} else if newAmountPaid > 0 {
-		status = "部分缴纳"
-	}
-
-	now := time.Now().UTC()
-	_, err = tx.Exec(`UPDATE tenants SET amount_paid = ?, status = ?, monthly_income = ?, annual_income = ?, updated_at = ? WHERE id = ?`,
-		newAmountPaid, status, newAmountPaid, newAmountPaid, now, tenantBillID)
-	if err != nil {
+	if err = applyPaidAmount(tx, tenantBillID, totalAmount, amountPaid+paymentAmount); err != nil {
 		return err
 	}
 
+	now := time.Now().UTC()
 	_, err = tx.Exec(`UPDATE wx_payment_orders SET trade_state = 'SUCCESS', wx_transaction_id = ?, paid_at = ?, notify_processed = 1, updated_at = ? WHERE out_trade_no = ?`,
 		transactionID, paidAt.UTC().Format(time.RFC3339), now.Format(time.RFC3339), outTradeNo)
 	if err != nil {

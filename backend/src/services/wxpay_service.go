@@ -150,6 +150,11 @@ func (w *WeChatPayService) SendSubscribeMessage(openid, templateID string, data 
 	return errors.New("real subscribe message send is not implemented yet")
 }
 
+// MockMode reports whether WeChat calls are simulated locally.
+func (w *WeChatPayService) MockMode() bool {
+	return w.cfg.MockMode
+}
+
 func (w *WeChatPayService) DefaultTemplateID() string {
 	return w.cfg.DefaultTemplateID
 }

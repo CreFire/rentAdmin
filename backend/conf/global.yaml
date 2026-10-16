@@ -1,8 +1,15 @@
 port: 8080
+sqlite_path: ./bin/rentadmin.db
+# Browser origins allowed to call the API cross-origin. The web console uses the Vite proxy and needs none.
+cors_allowed_origins: []
 log:
   level: info
+admin:
+  # Do not commit a real value. Set ADMIN_TOKEN instead; empty = random token printed at startup.
+  token: ""
 auth:
-  token_secret: "change_me_in_production"
+  # Do not commit a real value. Set AUTH_TOKEN_SECRET instead; required when mock_mode is false.
+  token_secret: ""
   token_ttl_seconds: 259200
 wechat:
   app_id: ""

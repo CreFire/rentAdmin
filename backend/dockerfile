@@ -7,7 +7,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=1 GOOS=linux go build -o server ./cmd/api
+RUN CGO_ENABLED=1 GOOS=linux go build -o server .
 
 # run stage
 FROM alpine:3.20
@@ -17,11 +17,12 @@ WORKDIR /app
 RUN apk add --no-cache ca-certificates tzdata
 
 COPY --from=builder /app/server /app/server
+COPY conf ./conf
 
 # 数据目录（SQLite 文件会放这里）
-RUN mkdir -p /data
-ENV SQLITE_PATH=/data/app.db
-ENV ADDR=:8080
+RUN mkdir -p /data /app/logs
+ENV SQLITE_PATH=/data/rentadmin.db
+# 生产环境必须通过环境变量注入：ADMIN_TOKEN、AUTH_TOKEN_SECRET、WECHAT_*，并设置 WECHAT_MOCK_MODE=false
 
 EXPOSE 8080
 CMD ["/app/server"]

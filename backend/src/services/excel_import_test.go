@@ -3,6 +3,7 @@ package services
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -199,6 +200,9 @@ func TestImportTenantsFromExcel_SkipsRowsWithZeroElectricityReading(t *testing.T
 func TestAnalyzeCent3DebugJSON(t *testing.T) {
 	debugPath := filepath.Join("..", "..", "..", "cent3.import.debug.json")
 	payload, err := os.ReadFile(debugPath)
+	if errors.Is(err, os.ErrNotExist) {
+		t.Skipf("%s not found; run an import with EXCEL_IMPORT_DEBUG=1 to generate it", debugPath)
+	}
 	if err != nil {
 		t.Fatalf("read debug json failed: %v", err)
 	}

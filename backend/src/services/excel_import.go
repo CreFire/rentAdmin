@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -231,8 +232,13 @@ func ImportTenantsFromExcel(db *sql.DB, providedPath string) (*ExcelImportSummar
 			}
 
 			record := mergeImportedRow(sheetName, metadata, mapping, existingExact, existingLatest, date, now)
+			if anchor, err := rentAnchorMonth(db, record); err == nil {
+				record.DueMonth = CollectionMonthFor(record.RentCycle, anchor, record.Date)
+			} else {
+				record.DueMonth = record.Date
+			}
 			if existingExact != nil {
-				if err := updateImportedTenant(db, existingExact.id, record); err != nil {
+				if _, err := UpdateTenant(db, existingExact.id, record); err != nil {
 					summary.Errors = append(summary.Errors, fmt.Sprintf("%s[%d]: update failed: %v", sheetName, rowIndex+1, err))
 					rowDebug.Accepted = false
 					rowDebug.SkipReason = fmt.Sprintf("update failed: %v", err)
@@ -245,7 +251,7 @@ func ImportTenantsFromExcel(db *sql.DB, providedPath string) (*ExcelImportSummar
 				continue
 			}
 
-			if err := insertImportedTenant(db, record); err != nil {
+			if err := InsertTenant(db, record); err != nil {
 				summary.Errors = append(summary.Errors, fmt.Sprintf("%s[%d]: insert failed: %v", sheetName, rowIndex+1, err))
 				rowDebug.Accepted = false
 				rowDebug.SkipReason = fmt.Sprintf("insert failed: %v", err)
@@ -260,11 +266,14 @@ func ImportTenantsFromExcel(db *sql.DB, providedPath string) (*ExcelImportSummar
 		debugSnapshot.Sheets = append(debugSnapshot.Sheets, sheetDebug)
 	}
 
-	debugJSONPath, err := writeImportDebugJSON(excelPath, debugSnapshot)
-	if err != nil {
-		summary.Errors = append(summary.Errors, fmt.Sprintf("write debug json failed: %v", err))
-	} else {
-		summary.DebugJSONPath = debugJSONPath
+	// The snapshot contains raw rows (ID card numbers, phones), so it is only written on explicit opt-in.
+	if os.Getenv("EXCEL_IMPORT_DEBUG") == "1" {
+		debugJSONPath, err := writeImportDebugJSON(excelPath, debugSnapshot)
+		if err != nil {
+			summary.Errors = append(summary.Errors, fmt.Sprintf("write debug json failed: %v", err))
+		} else {
+			summary.DebugJSONPath = debugJSONPath
+		}
 	}
 
 	return summary, nil
@@ -542,12 +551,7 @@ func mergeImportedRow(sheetName string, metadata sheetMetadata, mapping rowMappi
 		amountPaid = totalAmount
 	}
 
-	status := "待缴"
-	if amountPaid >= totalAmount {
-		status = "已缴"
-	} else if amountPaid > 0 {
-		status = "部分缴纳"
-	}
+	status := PaymentStatusFor(amountPaid, totalAmount)
 
 	recordedAt := fmt.Sprintf("%s-01", date)
 	waterReading := merged.waterReading
@@ -569,6 +573,8 @@ func mergeImportedRow(sheetName string, metadata sheetMetadata, mapping rowMappi
 		ElectricityReading:     electricityReading,
 		WaterBill:              mapping.waterBill,
 		ElectricityBill:        mapping.electricityBill,
+		ExtraFee:               mapping.extraFee,
+		RentDue:                math.Max(totalAmount-mapping.waterBill-mapping.electricityBill-mapping.extraFee, 0),
 		TotalAmount:            totalAmount,
 		AmountPaid:             amountPaid,
 		RentCycle:              metadata.rentCycle,
@@ -649,18 +655,6 @@ func getLatestTenantByRoom(db *sql.DB, roomNumber string) (*existingTenant, erro
 		return nil, err
 	}
 	return &record, nil
-}
-
-func insertImportedTenant(db *sql.DB, record *models.TenantRecord) error {
-	_, err := db.Exec(`INSERT INTO tenants(id, room_number, name, phone, id_card, check_in_date, deposit, rent_amount, water_reading, electricity_reading, water_bill, electricity_bill, total_amount, amount_paid, rent_cycle, utility_cycle, status, date, recorded_at, created_at, updated_at, monthly_income, annual_income, water_elec_income, monthly_water_elec_income, annual_water_elec_income) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		record.ID, record.RoomNumber, record.Name, record.Phone, record.IDCard, record.CheckInDate, record.Deposit, record.RentAmount, record.WaterReading, record.ElectricityReading, record.WaterBill, record.ElectricityBill, record.TotalAmount, record.AmountPaid, record.RentCycle, record.UtilityCycle, record.Status, record.Date, record.RecordedAt, record.CreatedAt.UTC().Format(time.RFC3339), record.UpdatedAt.UTC().Format(time.RFC3339), record.MonthlyIncome, record.AnnualIncome, record.WaterElecIncome, record.MonthlyWaterElecIncome, record.AnnualWaterElecIncome)
-	return err
-}
-
-func updateImportedTenant(db *sql.DB, id string, record *models.TenantRecord) error {
-	_, err := db.Exec(`UPDATE tenants SET name=?, phone=?, id_card=?, check_in_date=?, deposit=?, rent_amount=?, water_reading=?, electricity_reading=?, water_bill=?, electricity_bill=?, total_amount=?, amount_paid=?, rent_cycle=?, utility_cycle=?, status=?, recorded_at=?, updated_at=?, monthly_income=?, annual_income=?, water_elec_income=?, monthly_water_elec_income=?, annual_water_elec_income=? WHERE id = ?`,
-		record.Name, record.Phone, record.IDCard, record.CheckInDate, record.Deposit, record.RentAmount, record.WaterReading, record.ElectricityReading, record.WaterBill, record.ElectricityBill, record.TotalAmount, record.AmountPaid, record.RentCycle, record.UtilityCycle, record.Status, record.RecordedAt, record.UpdatedAt.UTC().Format(time.RFC3339), record.MonthlyIncome, record.AnnualIncome, record.WaterElecIncome, record.MonthlyWaterElecIncome, record.AnnualWaterElecIncome, id)
-	return err
 }
 
 func extractFullDate(value string) (string, int, int) {
@@ -746,7 +740,7 @@ func writeImportDebugJSON(excelPath string, snapshot importDebugSnapshot) (strin
 		return "", err
 	}
 
-	if err := os.WriteFile(outputPath, payload, 0644); err != nil {
+	if err := os.WriteFile(outputPath, payload, 0600); err != nil {
 		return "", err
 	}
 	return outputPath, nil

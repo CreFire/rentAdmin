@@ -4,13 +4,22 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 // AppConfig stores runtime settings for mini program and payment modules.
 type AppConfig struct {
-	Port int `yaml:"port"`
+	Port       int    `yaml:"port"`
+	SQLitePath string `yaml:"sqlite_path"`
+	// CORSAllowedOrigins lists browser origins allowed to call the API directly.
+	// The admin frontend goes through the Vite proxy (same origin) and does not need an entry.
+	CORSAllowedOrigins []string `yaml:"cors_allowed_origins"`
+	Admin              struct {
+		// Token protects /api/* admin endpoints. Empty means a random one is generated at startup.
+		Token string `yaml:"token"`
+	} `yaml:"admin"`
 	Auth struct {
 		TokenSecret     string `yaml:"token_secret"`
 		TokenTTLSeconds int64  `yaml:"token_ttl_seconds"`
@@ -37,7 +46,7 @@ type AppConfig struct {
 func Load(path string) AppConfig {
 	cfg := AppConfig{}
 	cfg.Port = 8080
-	cfg.Auth.TokenSecret = "change_me_in_production"
+	cfg.SQLitePath = "./bin/rentadmin.db"
 	cfg.Auth.TokenTTLSeconds = 72 * 3600
 	cfg.WeChat.MockMode = true
 	cfg.Reminder.Enabled = true
@@ -57,6 +66,15 @@ func Load(path string) AppConfig {
 		if port, convErr := strconv.Atoi(v); convErr == nil {
 			cfg.Port = port
 		}
+	}
+	if v := os.Getenv("SQLITE_PATH"); v != "" {
+		cfg.SQLitePath = v
+	}
+	if v := os.Getenv("CORS_ALLOWED_ORIGINS"); v != "" {
+		cfg.CORSAllowedOrigins = strings.Split(v, ",")
+	}
+	if v := os.Getenv("ADMIN_TOKEN"); v != "" {
+		cfg.Admin.Token = v
 	}
 	if v := os.Getenv("AUTH_TOKEN_SECRET"); v != "" {
 		cfg.Auth.TokenSecret = v

@@ -5,65 +5,56 @@ import (
 	"log"
 )
 
+// addedColumn is a tenants column introduced after the initial release. Backfill runs once, right after the column is added.
+type addedColumn struct {
+	name     string
+	ddl      string // column type and default; REAL NOT NULL DEFAULT 0 when empty
+	backfill string
+}
+
+var addedTenantColumns = []addedColumn{
+	{name: "monthly_income"},
+	{name: "annual_income"},
+	{name: "water_elec_income"},
+	{name: "monthly_water_elec_income"},
+	{name: "annual_water_elec_income"},
+	{name: "extra_fee"},
+	// Existing bills keep their totals: whatever is not utilities counts as this period's rent.
+	{name: "rent_due", backfill: "UPDATE tenants SET rent_due = MAX(total_amount - water_bill - electricity_bill, 0)"},
+	// Month in which the bill is collected; filled in by services.BackfillDueMonths for existing rows.
+	{name: "due_month", ddl: "TEXT NOT NULL DEFAULT ''"},
+}
+
+// MigrateSchema applies idempotent schema changes. Any failure aborts startup so the
+// server never runs against a half-migrated database.
 func MigrateSchema(db *sql.DB) {
-	// Add columns for monthly and annual income tracking if they don't exist
-	// First, check if the columns exist
-	var count int
-	err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('tenants') WHERE name='monthly_income'").Scan(&count)
-	if err != nil {
-		log.Printf("Error checking if monthly_income column exists: %v", err)
-	} else if count == 0 {
-		// Add monthly_income column
-		_, err = db.Exec("ALTER TABLE tenants ADD COLUMN monthly_income REAL NOT NULL DEFAULT 0")
-		if err != nil {
-			log.Printf("Error adding monthly_income column: %v", err)
+	for _, column := range addedTenantColumns {
+		var count int
+		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('tenants') WHERE name = ?", column.name).Scan(&count); err != nil {
+			log.Fatalf("check column %s: %v", column.name, err)
+		}
+		if count > 0 {
+			continue
+		}
+		ddl := column.ddl
+		if ddl == "" {
+			ddl = "REAL NOT NULL DEFAULT 0"
+		}
+		if _, err := db.Exec("ALTER TABLE tenants ADD COLUMN " + column.name + " " + ddl); err != nil {
+			log.Fatalf("add column %s: %v", column.name, err)
+		}
+		if column.backfill != "" {
+			if _, err := db.Exec(column.backfill); err != nil {
+				log.Fatalf("backfill column %s: %v", column.name, err)
+			}
 		}
 	}
 
-	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('tenants') WHERE name='annual_income'").Scan(&count)
-	if err != nil {
-		log.Printf("Error checking if annual_income column exists: %v", err)
-	} else if count == 0 {
-		// Add annual_income column
-		_, err = db.Exec("ALTER TABLE tenants ADD COLUMN annual_income REAL NOT NULL DEFAULT 0")
-		if err != nil {
-			log.Printf("Error adding annual_income column: %v", err)
-		}
+	if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_due_month ON tenants(due_month)"); err != nil {
+		log.Fatalf("create idx_due_month: %v", err)
 	}
 
-	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('tenants') WHERE name='water_elec_income'").Scan(&count)
-	if err != nil {
-		log.Printf("Error checking if water_elec_income column exists: %v", err)
-	} else if count == 0 {
-		// Add water_elec_income column
-		_, err = db.Exec("ALTER TABLE tenants ADD COLUMN water_elec_income REAL NOT NULL DEFAULT 0")
-		if err != nil {
-			log.Printf("Error adding water_elec_income column: %v", err)
-		}
-	}
-
-	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('tenants') WHERE name='monthly_water_elec_income'").Scan(&count)
-	if err != nil {
-		log.Printf("Error checking if monthly_water_elec_income column exists: %v", err)
-	} else if count == 0 {
-		// Add monthly_water_elec_income column
-		_, err = db.Exec("ALTER TABLE tenants ADD COLUMN monthly_water_elec_income REAL NOT NULL DEFAULT 0")
-		if err != nil {
-			log.Printf("Error adding monthly_water_elec_income column: %v", err)
-		}
-	}
-
-	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('tenants') WHERE name='annual_water_elec_income'").Scan(&count)
-	if err != nil {
-		log.Printf("Error checking if annual_water_elec_income column exists: %v", err)
-	} else if count == 0 {
-		// Add annual_water_elec_income column
-		_, err = db.Exec("ALTER TABLE tenants ADD COLUMN annual_water_elec_income REAL NOT NULL DEFAULT 0")
-		if err != nil {
-			log.Printf("Error adding annual_water_elec_income column: %v", err)
-		}
-	}
-
+	var err error
 	// Payment and mini program related tables for new feature set.
 	_, err = db.Exec(`
 CREATE TABLE IF NOT EXISTS wx_payment_orders (
@@ -91,7 +82,7 @@ CREATE INDEX IF NOT EXISTS idx_wx_payment_orders_openid ON wx_payment_orders(ope
 CREATE INDEX IF NOT EXISTS idx_wx_payment_orders_trade_state ON wx_payment_orders(trade_state);
 `)
 	if err != nil {
-		log.Printf("Error migrating wx_payment_orders: %v", err)
+		log.Fatalf("Error migrating wx_payment_orders: %v", err)
 	}
 
 	_, err = db.Exec(`
@@ -108,7 +99,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_wx_notify_event_unique ON wx_pay_notify_lo
 CREATE INDEX IF NOT EXISTS idx_wx_notify_out_trade_no ON wx_pay_notify_logs(out_trade_no);
 `)
 	if err != nil {
-		log.Printf("Error migrating wx_pay_notify_logs: %v", err)
+		log.Fatalf("Error migrating wx_pay_notify_logs: %v", err)
 	}
 
 	_, err = db.Exec(`
@@ -128,7 +119,7 @@ CREATE TABLE IF NOT EXISTS mp_user_bindings (
 CREATE INDEX IF NOT EXISTS idx_mp_user_bindings_room ON mp_user_bindings(room_number);
 `)
 	if err != nil {
-		log.Printf("Error migrating mp_user_bindings: %v", err)
+		log.Fatalf("Error migrating mp_user_bindings: %v", err)
 	}
 
 	_, err = db.Exec(`
@@ -151,6 +142,6 @@ CREATE INDEX IF NOT EXISTS idx_mp_reminder_logs_openid ON mp_reminder_logs(openi
 CREATE INDEX IF NOT EXISTS idx_mp_reminder_logs_status ON mp_reminder_logs(status);
 `)
 	if err != nil {
-		log.Printf("Error migrating mp_reminder_logs: %v", err)
+		log.Fatalf("Error migrating mp_reminder_logs: %v", err)
 	}
 }
