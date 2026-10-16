@@ -15,17 +15,20 @@ export interface TenantRecord {
     idCard?: string;       
     checkInDate?: string;  
     deposit?: number;      
-    rentAmount: number;
+    rentAmount: number;        // Monthly rent
+    rentDue?: number;          // Rent charged on this bill: rentAmount × cycle months in a cycle's first month, else 0
     waterReading: number;      // Current water meter reading
     electricityReading: number; // Current electricity meter reading
     waterBill: number;
     electricityBill: number;
-    totalAmount: number;
+    extraFee?: number;         // Other fees (garbage, repairs...)
+    totalAmount: number;       // rentDue + waterBill + electricityBill + extraFee
     amountPaid: number;    
     rentCycle: PaymentCycle;    
     utilityCycle: PaymentCycle; 
     status: PaymentStatus;
-    date: string; // Format YYYY-MM
+    date: string; // Billing (meter) month, YYYY-MM
+    dueMonth?: string; // Collection month: first collection month of the tenant's cycle on/after `date`
     recordedAt?: string; // Specific date of reading
     monthlyIncome?: number; // Monthly income
     annualIncome?: number; // Annual income
@@ -40,6 +43,18 @@ export interface ExcelImportSummary {
     updated: number;
     skipped: number;
     errors: string[];
+}
+
+export interface RoomPaymentResult {
+    roomNumber: string;
+    applied: Record<string, number>; // bill id -> amount applied
+    unapplied: number;               // left over after all unpaid bills were settled
+}
+
+export interface GenerateBillsResult {
+    month: string;
+    created: string[];  // room numbers that received a new bill
+    skipped: number;    // rooms that already had a bill for the month
 }
 
 export interface Artifact {

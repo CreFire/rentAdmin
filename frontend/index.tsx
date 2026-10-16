@@ -7,24 +7,25 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import ReactDOM from 'react-dom/client';
 import { ExcelImportSummary, TenantRecord, PaymentStatus, PaymentCycle } from './types';
 import { INITIAL_RECORDS } from './constants';
-import { fetchAllTenants, createOrUpdateTenant, updateTenant, fetchTenantsByRoom, fetchIncomeSummary, importExcelTenants, deleteTenantByRoom, deleteTenantById } from './utils';
+import { fetchAllTenants, createOrUpdateTenant, updateTenant, registerRoomPayment, generateMonthlyBills, fetchIncomeSummary, importExcelTenants, deleteTenantByRoom, deleteTenantById } from './utils';
 
-const WATER_UNIT_PRICE = 5.5;
-const ELEC_UNIT_PRICE = 1.2;
+// Local calendar date (YYYY-MM-DD). toISOString() is UTC and would book bills into the previous
+// month during the first hours of a month in UTC+8.
+// A bill is collectable once its collection month (per the tenant's payment cycle) has arrived.
+const isDue = (r: TenantRecord, month: string) => (r.dueMonth || r.date) <= month;
+const unpaidOf = (r: TenantRecord) => Math.max(r.totalAmount - r.amountPaid, 0);
 
-const getRentCycleMultiplier = (cycle?: PaymentCycle): number => {
-  switch (cycle) {
-    case '月度':
-      return 1;
-    case '季度':
-      return 3;
-    case '半年':
-      return 6;
-    case '年度':
-      return 12;
-    default:
-      return 1;
-  }
+interface RoomDue {
+  roomNumber: string;
+  name: string;
+  bills: TenantRecord[];   // due & unpaid, oldest first
+  outstanding: number;
+  latest: TenantRecord;
+}
+
+const todayLocal = (): string => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
 function useTenants() {
@@ -63,16 +64,22 @@ function useTenants() {
   }, []);
 
   const updateRecordCallback = useCallback(async (id: string, data: Partial<TenantRecord>) => {
-    await updateTenant(id, data as TenantRecord);
+    await updateTenant(id, data);
     await refreshRecords(); // Refresh after update
   }, [refreshRecords]);
 
   const addRecordCallback = useCallback(async (data: Partial<TenantRecord>) => {
-    await createOrUpdateTenant(data as TenantRecord);
+    await createOrUpdateTenant(data);
     await refreshRecords(); // Refresh after adding
   }, [refreshRecords]);
 
-  return { records, loading, updateRecord: updateRecordCallback, addRecord: addRecordCallback, refreshRecords };
+  const addRoomPaymentCallback = useCallback(async (roomNumber: string, amount: number) => {
+    const result = await registerRoomPayment(roomNumber, amount);
+    await refreshRecords();
+    return result;
+  }, [refreshRecords]);
+
+  return { records, loading, updateRecord: updateRecordCallback, addRecord: addRecordCallback, addRoomPayment: addRoomPaymentCallback, refreshRecords };
 }
 
 const SearchIcon = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>;
@@ -125,6 +132,7 @@ function IncomeStatsPanel() {
 
   useEffect(() => {
     const fetchStats = async () => {
+      setLoading(true);
       try {
         const stats = await fetchIncomeSummary(dateFilter);
         setIncomeStats(stats);
@@ -214,7 +222,7 @@ function IncomeStatsPanel() {
 }
 
 function App() {
-  const { records, updateRecord, addRecord, refreshRecords } = useTenants();
+  const { records, updateRecord, addRecord, addRoomPayment, refreshRecords } = useTenants();
   const [activePage, setActivePage] = useState<'billing' | 'metering' | 'collection' | 'management' | 'history' | 'income'>('management');
   const [modalState, setModalState] = useState<{ type: 'edit' | 'pay' | 'meter' | 'ai' | null, record: TenantRecord | null }>({ type: null, record: null });
   const [editMode, setEditMode] = useState<'tenant' | 'history'>('tenant');
@@ -227,10 +235,35 @@ function App() {
     roomNumber: '', name: '', phone: '', idCard: '', checkInDate: '', deposit: '', rentAmount: '', waterReading: '', electricityReading: '', rentCycle: '月度' as PaymentCycle, utilityCycle: '月度' as PaymentCycle
   });
   const [payAmount, setPayAmount] = useState('');
-  const [meterInput, setMeterInput] = useState({ water: '', electricity: '', date: new Date().toISOString().slice(0, 10) });
+  const [meterInput, setMeterInput] = useState({ water: '', electricity: '', extraFee: '', date: todayLocal() });
+  const [generatingBills, setGeneratingBills] = useState(false);
   const [historyRoomId, setHistoryRoomId] = useState<string | null>(null);
 
-  const pendingCollection = useMemo(() => records.filter(r => r.status !== '已缴'), [records]);
+  const currentMonth = todayLocal().slice(0, 7);
+  // Unpaid bills whose collection month has arrived, grouped per room: monthly tenants every month,
+  // quarterly / half-year tenants only in their collection month (rent + accumulated utilities).
+  const roomsDue = useMemo(() => {
+    const byRoom = new Map<string, RoomDue>();
+    [...records]
+      .filter(r => unpaidOf(r) > 0 && isDue(r, currentMonth))
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .forEach(r => {
+        const room = byRoom.get(r.roomNumber) || { roomNumber: r.roomNumber, name: r.name, bills: [], outstanding: 0, latest: r };
+        room.bills.push(r);
+        room.outstanding += unpaidOf(r);
+        room.latest = r;
+        room.name = r.name;
+        byRoom.set(r.roomNumber, room);
+      });
+    return [...byRoom.values()].sort((a, b) => a.roomNumber.localeCompare(b.roomNumber));
+  }, [records, currentMonth]);
+  const roomOutstanding = useCallback((roomNumber: string) =>
+    roomsDue.find(r => r.roomNumber === roomNumber)?.outstanding || 0, [roomsDue]);
+  const openPay = (record: TenantRecord) => {
+    const due = roomOutstanding(record.roomNumber);
+    setPayAmount((due > 0 ? due : unpaidOf(record)).toFixed(2));
+    setModalState({ type: 'pay', record });
+  };
   const uniqueTenants = useMemo(() => {
     const seen = new Set();
     return records.filter(r => {
@@ -242,9 +275,9 @@ function App() {
 
   const stats = useMemo(() => {
     const total = records.reduce((acc, r) => acc + (r.totalAmount || 0), 0);
-    const paid = records.reduce((acc, r) => acc + (r.amountPaid || 0), 0);
-    return { total, unpaid: total - paid, pending: pendingCollection.length, count: uniqueTenants.length };
-  }, [records, pendingCollection, uniqueTenants]);
+    const unpaid = roomsDue.reduce((acc, r) => acc + r.outstanding, 0);
+    return { total, unpaid, pending: roomsDue.length, count: uniqueTenants.length };
+  }, [records, roomsDue, uniqueTenants]);
 
   const roomHistory = useMemo(() => {
     if (!historyRoomId) return [];
@@ -258,12 +291,15 @@ function App() {
     return sorted[0] || null;
   }, [records]);
 
-  // Helper function to safely calculate amounts
-  const calculateAmount = (value: number | undefined): number => {
-    if (value === undefined || isNaN(value) || value === null) {
-      return 0;
+  // Keep the modal open on failure so the input is not lost.
+  const submitAndClose = async (action: () => Promise<void>) => {
+    try {
+      await action();
+      setModalState({ type: null, record: null });
+    } catch (error) {
+      console.error('Submit failed:', error);
+      alert(error instanceof Error ? error.message : '保存失败');
     }
-    return Math.max(0, value);
   };
 
   const openEdit = (record: TenantRecord | null, mode: 'tenant' | 'history' = 'tenant') => {
@@ -284,66 +320,94 @@ function App() {
     }
   };
 
+  // Amounts (rent due, utilities, total, status) are computed by the server; the client only sends inputs.
+  // waterBill/electricityBill = 0 asks the server to price utilities from the previous period's readings.
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const curWater = parseFloat(formData.waterReading) || 0;
-    const curElec = parseFloat(formData.electricityReading) || 0;
-    const dateStr = new Date().toISOString().slice(0, 7);
-    const prev = getPrevReading(formData.roomNumber, dateStr);
-    const waterBill = prev ? (curWater - prev.waterReading) * WATER_UNIT_PRICE : 0;
-    const electricityBill = prev ? (curElec - prev.electricityReading) * ELEC_UNIT_PRICE : 0;
-    const baseRent = parseFloat(formData.rentAmount) || 0;
-    const rentMultiplier = getRentCycleMultiplier(formData.rentCycle);
-    const rentAmountByCycle = baseRent * rentMultiplier;
-    const total = rentAmountByCycle + waterBill + electricityBill;
-    
-    const data: Partial<TenantRecord> = {
-      ...formData,
-      rentAmount: baseRent,
+    const record = modalState.record;
+    const water = parseFloat(formData.waterReading) || 0;
+    const elec = parseFloat(formData.electricityReading) || 0;
+    const profile: Partial<TenantRecord> = {
+      name: formData.name, phone: formData.phone,
+      idCard: formData.idCard || undefined, checkInDate: formData.checkInDate || undefined,
       deposit: parseFloat(formData.deposit) || 0,
-      waterReading: curWater, electricityReading: curElec,
-      waterBill, electricityBill, totalAmount: total,
-      amountPaid: modalState.record?.amountPaid || 0,
-      date: dateStr, recordedAt: new Date().toISOString().slice(0, 10),
-      status: (modalState.record?.amountPaid || 0) >= total ? '已缴' : ((modalState.record?.amountPaid || 0) > 0 ? '部分缴纳' : '待缴')
+      rentAmount: parseFloat(formData.rentAmount) || 0,
+      rentCycle: formData.rentCycle, utilityCycle: formData.utilityCycle,
     };
-    if (modalState.record) await updateRecord(modalState.record.id, data);
-    else await addRecord(data);
-    setModalState({ type: null, record: null });
+
+    if (record) {
+      const readingsChanged = water !== record.waterReading || elec !== record.electricityReading;
+      const data = readingsChanged
+        ? { ...profile, waterReading: water, electricityReading: elec, waterBill: 0, electricityBill: 0 }
+        : profile;
+      await submitAndClose(() => updateRecord(record.id, data));
+      return;
+    }
+    const today = todayLocal();
+    await submitAndClose(() => addRecord({
+      ...profile, roomNumber: formData.roomNumber,
+      waterReading: water, electricityReading: elec, waterBill: 0, electricityBill: 0, extraFee: 0, amountPaid: 0,
+      date: today.slice(0, 7), recordedAt: today,
+    }));
   };
 
   const handleMeterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!modalState.record) return;
-    const curWater = parseFloat(meterInput.water) || 0;
-    const curElec = parseFloat(meterInput.electricity) || 0;
+    const base = modalState.record;
+    if (!base) return;
     const month = meterInput.date.slice(0, 7);
-    const prev = getPrevReading(modalState.record.roomNumber, month);
-    const waterBill = prev ? (curWater - prev.waterReading) * WATER_UNIT_PRICE : 0;
-    const electricityBill = prev ? (curElec - prev.electricityReading) * ELEC_UNIT_PRICE : 0;
-    const rentMultiplier = getRentCycleMultiplier(modalState.record.rentCycle);
-    const total = (modalState.record.rentAmount * rentMultiplier) + waterBill + electricityBill;
-
-    const existing = records.find(r => r.roomNumber === modalState.record!.roomNumber && r.date === month);
-    const data: Partial<TenantRecord> = {
-      waterReading: curWater, electricityReading: curElec, waterBill, electricityBill, totalAmount: total,
-      date: month, recordedAt: meterInput.date,
-      status: (existing?.amountPaid || 0) >= total ? '已缴' : ((existing?.amountPaid || 0) > 0 ? '部分缴纳' : '待缴')
+    const reading: Partial<TenantRecord> = {
+      waterReading: parseFloat(meterInput.water) || 0,
+      electricityReading: parseFloat(meterInput.electricity) || 0,
+      waterBill: 0, electricityBill: 0,
+      extraFee: parseFloat(meterInput.extraFee) || 0,
+      recordedAt: meterInput.date,
     };
 
-    if (existing) await updateRecord(existing.id, data);
-    else await addRecord({ ...modalState.record, ...data, id: undefined, amountPaid: 0 });
-    setModalState({ type: null, record: null });
+    const existing = records.find(r => r.roomNumber === base.roomNumber && r.date === month);
+    await submitAndClose(() => existing
+      ? updateRecord(existing.id, reading)
+      : addRecord({
+          roomNumber: base.roomNumber, name: base.name, phone: base.phone, idCard: base.idCard,
+          checkInDate: base.checkInDate, deposit: base.deposit, rentAmount: base.rentAmount,
+          rentCycle: base.rentCycle, utilityCycle: base.utilityCycle,
+          ...reading, amountPaid: 0, date: month,
+        }));
   };
+
+  const handleGenerateBills = useCallback(async () => {
+    const month = window.prompt('为所有在租房间生成哪个月的账单？（YYYY-MM）', todayLocal().slice(0, 7));
+    if (!month) return;
+    setGeneratingBills(true);
+    try {
+      const result = await generateMonthlyBills(month.trim());
+      await refreshRecords();
+      alert(result.created.length
+        ? `${result.month} 已生成 ${result.created.length} 张账单：${result.created.join('、')}\n已有账单跳过 ${result.skipped} 户。水电费请在抄表后录入。`
+        : `${result.month} 没有需要生成的账单（已有 ${result.skipped} 户）。`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '生成失败');
+    } finally {
+      setGeneratingBills(false);
+    }
+  }, [refreshRecords]);
 
   const handlePaySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!modalState.record) return;
-    const newPaid = modalState.record.amountPaid + (parseFloat(payAmount) || 0);
-    const status = newPaid >= modalState.record.totalAmount ? '已缴' : (newPaid > 0 ? '部分缴纳' : '待缴');
-    await updateRecord(modalState.record.id, { amountPaid: newPaid, status });
-    setModalState({ type: null, record: null });
-    setPayAmount('');
+    const amount = parseFloat(payAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      alert('请输入大于 0 的收款金额');
+      return;
+    }
+    const roomNumber = modalState.record.roomNumber;
+    await submitAndClose(async () => {
+      const result = await addRoomPayment(roomNumber, amount);
+      setPayAmount('');
+      if (result.unapplied > 0) {
+        alert(`已冲抵 ${Object.keys(result.applied).length} 张账单，多收 ¥${result.unapplied.toFixed(2)} 未入账（该房间已无欠款），请核对。`);
+      }
+    });
   };
 
   const handleExcelImport = useCallback(async () => {
@@ -440,6 +504,9 @@ function App() {
                 <button className="btn-secondary" onClick={handleExcelImport} disabled={importingExcel}>
                   {importingExcel ? '导入中...' : '导入 Excel'}
                 </button>
+                <button className="btn-secondary" onClick={handleGenerateBills} disabled={generatingBills}>
+                  {generatingBills ? '生成中...' : '生成月账单'}
+                </button>
                 <button className="btn-primary" onClick={() => openEdit(null)}>新开账单</button>
               </div>
             </header>
@@ -471,10 +538,12 @@ function App() {
                         <td>{latest?.date || '--'}</td>
                         <td style={{ color: 'var(--accent)', fontWeight: 700 }}>¥{latest?.totalAmount.toFixed(1) || '0.0'}</td>
                         <td>¥{latest?.amountPaid.toFixed(1) || '0.0'}</td>
-                        <td><span className={`status-chip ${latest?.status === '已缴' ? 'paid' : 'pending'}`}>{latest?.status || '未入账'}</span></td>
+                        <td>{latest && latest.status !== '已缴' && !isDue(latest, currentMonth)
+                          ? <span className="status-chip paid">未到期 · {latest.dueMonth} 收</span>
+                          : <span className={`status-chip ${latest?.status === '已缴' ? 'paid' : 'pending'}`}>{latest?.status || '未入账'}</span>}</td>
                         <td>
                           <div className="action-group">
-                            <button className="btn-icon" title="登记缴费" onClick={() => { setPayAmount((latest.totalAmount - latest.amountPaid).toFixed(2)); setModalState({ type: 'pay', record: latest }); }}><PayIcon /></button>
+                            <button className="btn-icon" title="登记缴费" onClick={() => openPay(latest)}><PayIcon /></button>
                             <button className="btn-icon" title="查看历史" onClick={() => { setHistoryRoomId(r.roomNumber); setActivePage('history'); }}><HistoryIcon /></button>
                           </div>
                         </td>
@@ -506,7 +575,7 @@ function App() {
                     </div>
                     <div className="tenant-card-footer">
                       <button className="btn-primary" style={{ width: '100%' }} onClick={() => {
-                        setMeterInput({ water: latest?.waterReading.toString() || '0', electricity: latest?.electricityReading.toString() || '0', date: new Date().toISOString().slice(0, 10) });
+                        setMeterInput({ water: latest?.waterReading.toString() || '0', electricity: latest?.electricityReading.toString() || '0', extraFee: '', date: todayLocal() });
                         setModalState({ type: 'meter', record: latest });
                       }}><MeterIcon /> 录入新读数</button>
                     </div>
@@ -521,16 +590,22 @@ function App() {
           <div className="view-fade-in">
             <header className="main-header"><div><h1>催缴任务</h1><p className="subtitle">快速生成 AI 催缴文案并登记收款</p></div></header>
             <div className="management-grid">
-              {pendingCollection.map(r => (
-                <div className="tenant-detail-card" key={r.id} style={{ borderLeft: `4px solid ${r.status === '部分缴纳' ? 'var(--accent)' : 'var(--warning)'}` }}>
-                  <div className="tenant-card-header"><h3>{r.name} <small>{r.date}</small></h3><span className="room-badge">{r.roomNumber}</span></div>
+              {roomsDue.length === 0 && <p className="subtitle">本月没有到期未缴的账单。</p>}
+              {roomsDue.map(room => (
+                <div className="tenant-detail-card" key={room.roomNumber} style={{ borderLeft: `4px solid ${room.bills.some(b => b.amountPaid > 0) ? 'var(--accent)' : 'var(--warning)'}` }}>
+                  <div className="tenant-card-header"><h3>{room.name} <small>{room.latest.rentCycle}</small></h3><span className="room-badge">{room.roomNumber}</span></div>
                   <div className="tenant-card-body">
-                    <p><span>实收额 / 应收额</span> <b>¥{r.amountPaid.toFixed(2)} / ¥{r.totalAmount.toFixed(2)}</b></p>
-                    <p style={{ marginTop: 8, borderTop: '1px solid var(--border)', paddingTop: 8 }}><span>尚欠余额</span> <b style={{ color: 'var(--danger)', fontSize: '1.1rem' }}>¥{(r.totalAmount - r.amountPaid).toFixed(2)}</b></p>
+                    {room.bills.map(b => (
+                      <p key={b.id}>
+                        <span>{b.date}{b.rentDue ? ' 房租' : ''}{b.waterBill + b.electricityBill > 0 ? ' 水电' : ''}{b.extraFee ? ' 其他' : ''}</span>
+                        <b>¥{unpaidOf(b).toFixed(2)}{b.amountPaid > 0 ? `（已收 ¥${b.amountPaid.toFixed(2)}）` : ''}</b>
+                      </p>
+                    ))}
+                    <p style={{ marginTop: 8, borderTop: '1px solid var(--border)', paddingTop: 8 }}><span>本期应收合计</span> <b style={{ color: 'var(--danger)', fontSize: '1.1rem' }}>¥{room.outstanding.toFixed(2)}</b></p>
                   </div>
                   <div className="tenant-card-footer">
-                    <button className="btn-link" onClick={() => setModalState({ type: 'ai', record: r })}><SparkleIcon /> 智能提醒</button>
-                    <button className="btn-primary" onClick={() => { setPayAmount((r.totalAmount - r.amountPaid).toFixed(2)); setModalState({ type: 'pay', record: r }); }}><PayIcon /> 登记缴费</button>
+                    <button className="btn-link" onClick={() => setModalState({ type: 'ai', record: { ...room.latest, totalAmount: room.outstanding, amountPaid: 0 } })}><SparkleIcon /> 智能提醒</button>
+                    <button className="btn-primary" onClick={() => openPay(room.latest)}><PayIcon /> 登记缴费</button>
                   </div>
                 </div>
               ))}
@@ -613,10 +688,15 @@ function App() {
                           </div>
                         </td>
                         <td>
-                          <div style={{ fontSize: '0.75rem' }}>房租: ¥{h.rentAmount}</div>
+                          <div style={{ fontSize: '0.75rem' }}>房租: ¥{(h.rentDue ?? 0).toFixed(2)}{h.rentDue === 0 && h.rentCycle !== '月度' ? `（${h.rentCycle}，非收租月）` : ''}</div>
+                          <div style={{ fontSize: '0.75rem' }}>水电: ¥{(h.waterBill + h.electricityBill).toFixed(2)}{h.extraFee ? ` · 其他: ¥${h.extraFee.toFixed(2)}` : ''}</div>
                           <div style={{ fontWeight: 800 }}>总计: ¥{h.totalAmount.toFixed(1)}</div>
                         </td>
-                        <td><span className={`status-chip ${h.status === '已缴' ? 'paid' : 'pending'}`}>{h.status}</span></td>
+                        <td>
+                          {h.status !== '已缴' && !isDue(h, currentMonth)
+                            ? <span className="status-chip paid" title="按缴费周期在收款月合并收取">未到期 · {h.dueMonth} 收</span>
+                            : <span className={`status-chip ${h.status === '已缴' ? 'paid' : 'pending'}`}>{h.status}</span>}
+                        </td>
                         <td>
                           <div className="action-group">
                             <button className="btn-icon" title="修改记录" onClick={() => openEdit(h, 'history')}><EditIcon /></button>
@@ -650,7 +730,11 @@ function App() {
                 <label>电表新读数 (度)</label>
                 <input required type="number" step="0.1" value={meterInput.electricity} onChange={e => setMeterInput({...meterInput, electricity: e.target.value})} />
               </div>
-              <div className="alert-box">系统将自动检索上一期读数并结算本次用量。</div>
+              <div className="form-group">
+                <label>其他费用 (¥，如垃圾费/维修费，可空)</label>
+                <input type="number" step="0.01" min="0" value={meterInput.extraFee} onChange={e => setMeterInput({...meterInput, extraFee: e.target.value})} />
+              </div>
+              <div className="alert-box">系统将自动检索上一期读数结算水电；房租按缴费周期在周期首月收取。</div>
               <button type="submit" className="btn-submit">提交并生成账单</button>
             </form>
           </div>
@@ -678,6 +762,7 @@ function App() {
                   <select value={formData.rentCycle} onChange={e => setFormData({...formData, rentCycle: e.target.value as PaymentCycle})}>
                     <option value="月度">月度</option>
                     <option value="季度">季度</option>
+                    <option value="半年">半年</option>
                     <option value="年度">年度</option>
                   </select>
                 </div>
@@ -703,8 +788,9 @@ function App() {
       {modalState.type === 'pay' && (
         <div className="modal-overlay" onClick={() => setModalState({ type: null, record: null })}>
           <div className="modal-content mini" onClick={e => e.stopPropagation()}>
-            <div className="main-header"><h3>登记实收金额</h3></div>
+            <div className="main-header"><h3>登记实收金额 - {modalState.record?.roomNumber}</h3></div>
             <form onSubmit={handlePaySubmit}>
+              <div className="alert-box">按房间入账：从最早到期的账单起依次冲抵（房租 + 累计水电）。</div>
               <div className="form-group">
                 <label>本次收款金额 (¥)</label>
                 <input autoFocus type="number" step="0.01" value={payAmount} onChange={e => setPayAmount(e.target.value)} />
